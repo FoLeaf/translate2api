@@ -263,8 +263,9 @@ func splitChunks(text string) []string {
 
 type DoubaoService struct {
 	hc *http.Client
-	// 上游串行锁：共享 Cookie + 防风控
-	serial sync.Mutex
+	// 上游并发闸：共享 Cookie 防风控默认串行（1），压测实测并发 2 安全，
+	// 经 TH_DOUBAO_UPSTREAM_CONC 可调
+	serial chan struct{}
 	// 凑批器
 	batcher *batcher
 	// 凭据缓存，避免热路径每请求查库
@@ -275,7 +276,12 @@ type DoubaoService struct {
 }
 
 func newDoubaoService() *DoubaoService {
+	conc := envInt("TH_DOUBAO_UPSTREAM_CONC", 1)
+	if conc < 1 {
+		conc = 1
+	}
 	s := &DoubaoService{
+		serial: make(chan struct{}, conc),
 		hc: &http.Client{
 			Timeout: time.Duration(cfg.DoubaoTimeout) * time.Second,
 			Transport: &http.Transport{
@@ -343,8 +349,8 @@ func (s *DoubaoService) callUpstream(texts []string, target string) (map[int]str
 		"frontend_source":   1,
 	})
 
-	s.serial.Lock()
-	defer s.serial.Unlock()
+	s.serial <- struct{}{}
+	defer func() { <-s.serial }()
 
 	req, err := http.NewRequest(http.MethodPost, cfg.DoubaoUpstream+doubaoStreamPath, bytes.NewReader(body))
 	if err != nil {
