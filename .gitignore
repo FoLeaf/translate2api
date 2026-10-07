@@ -10,3 +10,5 @@ transhub/data/
 __pycache__/
 *.pyc
 .venv/
+
+bench/results/
