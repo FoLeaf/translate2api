@@ -56,12 +56,15 @@ func newBiliService() *BiliService {
 	s := &BiliService{
 		hc: &http.Client{
 			Transport: &http.Transport{
-				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-				MaxIdleConns:          20,
-				MaxIdleConnsPerHost:   20,
-				IdleConnTimeout:       120 * time.Second,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 30 * time.Second,
+				DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+				// 空闲连接池须覆盖信号量（32）并留余量，否则高并发下部分
+				// 请求每轮重建 TCP+TLS，把网关自身延迟混进上游耗时
+				MaxIdleConns:        48,
+				MaxIdleConnsPerHost: 48,
+				IdleConnTimeout:     120 * time.Second,
+				TLSHandshakeTimeout: 10 * time.Second,
+				// 上游偶发停滞可达 60 秒级，网关不先于上游掐断，上限交给 B站
+				ResponseHeaderTimeout: 60 * time.Second,
 			},
 		},
 		sem: make(chan struct{}, cfg.BiliUpConc),
