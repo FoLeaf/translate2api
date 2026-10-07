@@ -47,3 +47,5 @@ docker logs -f transhub   # 未设 ADMIN_PASSWORD 时，随机初始密码打印
 - 豆包线路为逆向非公开接口，仅供个人学习研究，禁止商用或批量抓取，存在风控与失效风险。
 - B站 Index-Translate 免费 API 的开放期限未公布，随时可能调整或下线。
 - 所有被翻译文本会经过本机或服务器与对应上游，请勿翻译敏感内容。
+
+> 2026-10-07 起线上网关为 Go 重写版（transhub-go/，监听 8301，nginx 已切换）；transhub/ 为 Python 原版，保留观察期后下线。
