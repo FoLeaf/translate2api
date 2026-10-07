@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>设置</h1>
+
+<div class="card">
+  <h2>修改管理员密码</h2>
+  <label class="f">当前密码</label>
+  <input type="password" id="oldpw" autocomplete="current-password">
+  <label class="f">新密码（至少 8 位）</label>
+  <input type="password" id="newpw" autocomplete="new-password">
+  <div style="margin-top:12px"><button class="primary" onclick="changePw()">修改密码</button></div>
+  <div id="pwmsg" class="small" style="margin-top:8px"></div>
+</div>
+
+<div class="card">
+  <h2>限流（保护上游账号）</h2>
+  <p class="muted small" style="margin-top:0">
+    令牌桶算法：rate 为每秒补充速率，burst 为最大突发。豆包建议 ≤2/秒（防风控）。
+  </p>
+  <div id="rates"></div>
+</div>
+
+<div class="card">
+  <h2>安全建议</h2>
+  <ul class="small muted" style="margin:0;padding-left:18px;line-height:2">
+    <li>后台走 HTTP 明文时，建议通过 SSH 隧道访问：<code>ssh -L 8300:127.0.0.1:8300 root@服务器</code> 后打开 http://127.0.0.1:8300/admin</li>
+    <li>务必创建 API Key（左侧「API Key」页），避免网关被陌生人白嫖豆包额度</li>
+    <li>数据目录挂载在宿主机 <code>/opt/transhub/data</code>，含 SQLite 数据库，注意备份</li>
+  </ul>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+async function loadRates() {
+  const d = await api("/admin/api/rate");
+  if (!d.ok) return;
+  document.getElementById("rates").innerHTML = d.rates.map(r => `
+    <div class="row" style="margin:8px 0">
+      <b class="small" style="width:140px">${esc(r.provider)}</b>
+      <label class="small">rate(个/秒) <input type="text" id="rate-${esc(r.provider)}" value="${r.rate}" style="width:90px"></label>
+      <label class="small">burst(突发) <input type="text" id="burst-${esc(r.provider)}" value="${r.burst}" style="width:90px"></label>
+      <button class="small" onclick="saveRate('${esc(r.provider)}')">保存</button>
+    </div>`).join("");
+}
+async function saveRate(pid) {
+  const r = await api("/admin/api/rate", {
+    method: "PUT",
+    body: { provider: pid,
+            rate: parseFloat(document.getElementById(`rate-${pid}`).value),
+            burst: parseFloat(document.getElementById(`burst-${pid}`).value) }
+  });
+  toast(r.ok ? "已保存" : (r.detail || "保存失败"));
+}
+async function changePw() {
+  const r = await api("/admin/api/password", {
+    method: "POST",
+    body: { old: document.getElementById("oldpw").value,
+            new: document.getElementById("newpw").value }
+  });
+  document.getElementById("pwmsg").textContent = r.ok ? "修改成功，下次登录请使用新密码" : (r.detail || "修改失败");
+  if (r.ok) { document.getElementById("oldpw").value = ""; document.getElementById("newpw").value = ""; }
+}
+loadRates();
+</script>
+{% endblock %}

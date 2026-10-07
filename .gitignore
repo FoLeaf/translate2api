@@ -1,0 +1,12 @@
+# 密钥与凭据（严禁入库）
+key_prod.txt
+doubao-cookie.txt
+.env
+
+# 运行时数据（SQLite、初始密码文件等）
+transhub/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

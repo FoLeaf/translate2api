@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ app_title }} - 后台管理</title>
+<link rel="stylesheet" href="/admin/static/app.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="dot"></span>{{ app_title }}</div>
+  <nav class="nav">
+    <a href="/admin" class="{{ 'active' if path == '/admin' }}">仪表盘</a>
+    <a href="/admin/providers" class="{{ 'active' if path.startswith('/admin/providers') }}">服务商</a>
+    <a href="/admin/keys" class="{{ 'active' if path.startswith('/admin/keys') }}">API Key</a>
+    <a href="/admin/usage" class="{{ 'active' if path.startswith('/admin/usage') }}">使用记录</a>
+    <a href="/admin/settings" class="{{ 'active' if path.startswith('/admin/settings') }}">设置</a>
+  </nav>
+  <button class="small" onclick="logout()">退出登录</button>
+</div>
+<div class="wrap">
+{% block content %}{% endblock %}
+</div>
+<footer>TransHub · 自托管翻译网关 · 豆包 / B站 Index-Translate</footer>
+<script src="/admin/static/app.js"></script>
+<script>
+async function logout() {
+  await api("/admin/api/logout", { method: "POST" });
+  location.href = "/admin/login";
+}
+</script>
+{% block script %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>服务商管理</h1>
+<div id="root"><p class="muted">加载中…</p></div>
+{% endblock %}
+
+{% block script %}
+<script>
+let timers = {};
+
+async function loadAll() {
+  const ov = await api("/admin/api/overview");
+  if (!ov.ok) return;
+  const root = document.getElementById("root");
+  root.innerHTML = ov.providers.map(p => `
+    <div class="card" id="sec-${esc(p.id)}">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <h2 style="margin:0">${esc(p.name)} ${statusBadge(p.status && p.status.ok)}</h2>
+          <div class="muted small">${esc(p.desc || "")}</div>
+        </div>
+        <button class="small" onclick="testProvider('${esc(p.id)}', this)">测试连通</button>
+      </div>
+      <div class="small" id="st-${esc(p.id)}" style="margin-top:6px">${esc(p.status ? p.status.detail : "")}</div>
+      <div id="extra-${esc(p.id)}"></div>
+    </div>`).join("");
+  for (const p of ov.providers) {
+    loadProvider(p.id);
+  }
+}
+
+async function loadProvider(pid) {
+  const d = await api(`/admin/api/providers/${pid}`);
+  if (!d.ok) return;
+  const box = document.getElementById(`extra-${pid}`);
+  let html = "";
+
+  // 配置（豆包）
+  if (pid === "doubao" && d.config && d.config.engine !== undefined) {
+    html += `
+      <div style="margin-top:14px">
+        <label class="f">翻译引擎</label>
+        <select id="cfg-engine-${pid}">
+          <option value="0" ${d.config.engine === "0" ? "selected" : ""}>0 · 火山引擎（最快）</option>
+          <option value="1" ${d.config.engine === "1" ? "selected" : ""}>1 · 豆包AI（默认）</option>
+          <option value="3" ${d.config.engine === "3" ? "selected" : ""}>3 · 微软</option>
+        </select>
+        <label class="f">场景 scene</label>
+        <select id="cfg-scene-${pid}">
+          <option value="1" ${d.config.scene == 1 ? "selected" : ""}>1 · 整页翻译</option>
+          <option value="2" ${d.config.scene == 2 ? "selected" : ""}>2 · AI阅读器</option>
+          <option value="3" ${d.config.scene == 3 ? "selected" : ""}>3 · 划词</option>
+          <option value="6" ${d.config.scene == 6 ? "selected" : ""}>6 · 悬停</option>
+        </select>
+        <div style="margin-top:10px">
+          <button class="small" onclick="saveConfig('${pid}')">保存配置</button>
+        </div>
+      </div>`;
+  }
+
+  // 扫码登录区
+  if (d.login_mode) {
+    const frameMode = d.login_mode === "frame";
+    html += `
+      <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+        <div class="row">
+          <b class="small">自动获取 Cookie（扫码登录）</b>
+          <button class="small primary" onclick="loginStart('${pid}', this)">开始扫码登录</button>
+          <button class="small" onclick="loginCancel('${pid}')">取消</button>
+        </div>
+        <div class="qr-area" id="qr-${pid}">
+          <span class="muted small">点击「开始扫码登录」后此处显示二维码</span>
+        </div>
+        <div class="small muted" id="loginst-${pid}"></div>
+        ${frameMode ? '<div class="muted small">豆包扫码走容器内真实浏览器，二维码在截图里；截图约每 1.2 秒刷新。</div>' : ""}
+      </div>
+      <details style="margin-top:12px">
+        <summary>应急：手动导入 Cookie（不推荐，仅在扫码不可用时）</summary>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="manual-${pid}" placeholder="粘贴整串 Cookie" style="max-width:520px">
+          <button class="small" onclick="manualImport('${pid}')">导入</button>
+        </div>
+      </details>`;
+  }
+
+  // 凭据列表
+  if (d.credentials && d.credentials.length) {
+    html += `
+      <div style="margin-top:16px">
+        <b class="small">已存凭据</b>
+        <table style="margin-top:6px">
+          <tr><th>名称</th><th>账号/UID</th><th>状态</th><th>更新时间</th><th></th></tr>
+          ${d.credentials.map(c => `
+            <tr>
+              <td>${esc(c.name)}</td>
+              <td>${esc(c.account || c.uid || "")}</td>
+              <td>${c.status === "active" ? '<span class="badge ok">有效</span>'
+                    : '<span class="badge bad">' + esc(c.status) + '</span>'}</td>
+              <td class="small">${fmtTime(c.updated_at)}</td>
+              <td><button class="small danger" onclick="delCred('${pid}', '${esc(c.name)}')">删除</button></td>
+            </tr>`).join("")}
+        </table>
+      </div>`;
+  }
+
+  box.innerHTML = html;
+}
+
+async function saveConfig(pid) {
+  const r = await api(`/admin/api/providers/${pid}/config`, {
+    method: "PUT",
+    body: { engine: document.getElementById(`cfg-engine-${pid}`).value,
+            scene: parseInt(document.getElementById(`cfg-scene-${pid}`).value) }
+  });
+  toast(r.ok ? "已保存" : (r.detail || "保存失败"));
+}
+
+async function testProvider(pid, btn) {
+  btn.disabled = true; btn.textContent = "测试中…";
+  const r = await api(`/admin/api/providers/${pid}/test`, { method: "POST" });
+  btn.disabled = false; btn.textContent = "测试连通";
+  const el = document.getElementById(`st-${pid}`);
+  el.innerHTML = (r.ok ? '<span class="badge ok">通过</span> ' : '<span class="badge bad">失败</span> ')
+                 + esc(r.detail || "");
+}
+
+async function loginStart(pid, btn) {
+  stopPoll(pid);
+  const r = await api(`/admin/api/providers/${pid}/login/start`, { method: "POST" });
+  if (!r.ok) { toast(r.detail || "启动失败"); return; }
+  const qr = document.getElementById(`qr-${pid}`);
+  if (r.mode === "qr_svg" && r.qr_svg) {
+    qr.innerHTML = r.qr_svg + `<div class="muted small">${esc(r.detail || "请扫码")}</div>`;
+  } else {
+    qr.innerHTML = `<img id="frame-${pid}" alt="登录页面">
+                    <div class="muted small">等待浏览器截图…</div>`;
+  }
+  startPoll(pid, r.mode);
+}
+
+function startPoll(pid, mode) {
+  const img = () => document.getElementById(`frame-${pid}`);
+  timers[pid] = {
+    frame: mode === "frame" ? setInterval(() => {
+      const im = img();
+      if (im) im.src = `/admin/api/providers/${pid}/login/frame?t=${Date.now()}`;
+    }, 1500) : null,
+    status: setInterval(async () => {
+      const r = await api(`/admin/api/providers/${pid}/login/poll`);
+      const el = document.getElementById(`loginst-${pid}`);
+      if (el) el.textContent = r.detail || r.status || "";
+      if (["confirmed", "expired", "error", "idle"].includes(r.status)) {
+        stopPoll(pid);
+        if (r.status === "confirmed") {
+          toast(r.detail || "登录成功");
+          loadAll();
+        } else if (r.status === "expired" || r.status === "error") {
+          toast(r.detail || "登录结束，未成功");
+        }
+      }
+    }, 1600)
+  };
+  if (mode === "frame") { const im = img(); if (im) im.src = `/admin/api/providers/${pid}/login/frame?t=${Date.now()}`; }
+}
+
+function stopPoll(pid) {
+  const t = timers[pid];
+  if (t) { clearInterval(t.frame); clearInterval(t.status); timers[pid] = null; }
+}
+
+async function loginCancel(pid) {
+  stopPoll(pid);
+  await api(`/admin/api/providers/${pid}/login/cancel`, { method: "POST" });
+  toast("已取消");
+}
+
+async function manualImport(pid) {
+  const inp = document.getElementById(`manual-${pid}`);
+  const r = await api(`/admin/api/providers/${pid}/credentials/manual`, {
+    method: "POST", body: { cookie: inp.value }
+  });
+  toast(r.ok ? "已导入" : (r.detail || "导入失败"));
+  if (r.ok) { inp.value = ""; loadAll(); }
+}
+
+async function delCred(pid, name) {
+  if (!confirm(`删除凭据 ${name}？`)) return;
+  await api(`/admin/api/providers/${pid}/credentials/${encodeURIComponent(name)}`, { method: "DELETE" });
+  loadAll();
+}
+
+loadAll();
+</script>
+{% endblock %}
