@@ -180,6 +180,12 @@ func (s *BiliService) Proxy(w http.ResponseWriter, r *http.Request, path string)
 	for k, v := range corsHeaders(nil) {
 		outHeader.Set(k, v)
 	}
+	// 上游 429 只在报文里说 retry in 1s、不带 Retry-After 头；补上该头
+	// 让客户端按上游自己的节奏（1 秒）重试，而非默认 5 秒起步的指数退避。
+	// 上游配额实测约 1 秒回填（TPM 60000/分钟），其余状态一律原样直返。
+	if resp.StatusCode == http.StatusTooManyRequests && resp.Header.Get("Retry-After") == "" {
+		outHeader.Set("Retry-After", "1")
+	}
 
 	w.WriteHeader(resp.StatusCode)
 
