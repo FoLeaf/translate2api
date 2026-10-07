@@ -124,3 +124,9 @@ ReadFrog 社区已经动起来了：issue #2309《添加Bilibili免费模型》�
 - 网页端（/?p=/site/translate.html）不受影响：它走的是 `/?p=/translate_stream` 端点，报文为 `{text, source_lang, target_lang, model, stream}`，模型更名为 `index-mt-2b / index-mt-9b / index-mt-35b`，返回标准 OpenAI chunk 形态的 SSE。
 - 云端网关已适配：对外 OpenAI 兼容接口不变（ReadFrog 零改动），对内改调 translate_stream；旧模型名（Index-Translate-2B 等）自动映射到对应 index-mt 档位；目标语言默认 zh，可在后台设置 `bili_target_lang` 覆盖；上游错误依旧原样直返。
 - **本地脚本方案（bilibili-index-translate-proxy.py）直连 /v1，同样受此故障影响**，待上游修复后自动恢复；急需使用请走云端网关或网页端。
+
+### 上游配额与网关配速（2026-10-07 补充）
+
+- translate_stream 对来源 IP 有 **60000 tokens/分钟**硬配额（429 响应体原文：TPM limit of 60000 tokens/min exceeded），耗尽后全量 429，每秒约回填 1000 tokens；并发本身无限制（16 路并发大文本 1.5 秒级完成）。
+- 云端网关已按此配额在入口配速：估算 token 排队消化（等待上限 8 秒），差距过大回 429 并带按真实缺口计算的 Retry-After；上游实际 429 时同步清零本地预算。配额值可经环境变量 TH_BILI_TPM 调整。
+- 体感参考：普通页面（40 段约 5k token）一次成型无感知；160 段大页面约 20k token，单页没问题，连续翻译多个大页面会进入每分钟配额节奏（约 2 请求/秒），网关排队消化，段落不会丢。
