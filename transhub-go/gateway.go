@@ -277,11 +277,20 @@ func bilibiliHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bodyLen := int64(0)
+	var bodyLen int64
 	if r.ContentLength > 0 {
 		bodyLen = r.ContentLength
 	}
-	outcome := biliSvc.Proxy(w, r, path)
+	var outcome ProxyOutcome
+	if path == "v1/chat/completions" || path == "chat/completions" {
+		// OpenAI chat 走适配层：上游 /v1 已故障，改接网页端 translate_stream
+		outcome = biliSvc.ProxyChat(w, r)
+		if outcome.Bytes > 0 {
+			bodyLen = outcome.Bytes
+		}
+	} else {
+		outcome = biliSvc.Proxy(w, r, path)
+	}
 	okv := outcome.Status < 400
 	msg := outcome.Err
 	if !okv && msg != "" {
