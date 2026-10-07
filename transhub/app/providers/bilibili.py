@@ -28,6 +28,20 @@ STRIP_RESP = {
 }
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
+# 共享连接池：避免每个请求都向上游重建 TCP+TLS（整页翻译是并发小请求，握手开销占比高）
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=15, read=300, write=60, pool=15),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=20,
+                                keepalive_expiry=120),
+        )
+    return _client
+
 
 def _err(status: int, msg: str) -> ProxyResult:
     return ProxyResult(status, [("content-type", "application/json; charset=utf-8")],
@@ -68,12 +82,11 @@ class BilibiliProvider(TranslationProvider):
         if cred and cred["status"] == "active" and cred["data"].get("cookie"):
             fwd["Cookie"] = cred["data"]["cookie"]
 
-        client = httpx.AsyncClient(timeout=httpx.Timeout(connect=15, read=300, write=60, pool=15))
+        client = _get_client()
         try:
             req = client.build_request(method, url, headers=fwd, content=body)
             resp = await client.send(req, stream=True)
         except httpx.HTTPError as e:
-            await client.aclose()
             return _err(502, "upstream network error: %s" % e)
 
         out_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in STRIP_RESP]
@@ -85,7 +98,6 @@ class BilibiliProvider(TranslationProvider):
                         yield chunk
             finally:
                 await resp.aclose()
-                await client.aclose()
 
         return ProxyResult(resp.status_code, out_headers, stream())
 

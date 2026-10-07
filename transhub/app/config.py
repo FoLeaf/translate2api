@@ -19,4 +19,5 @@ BILIBILI_UPSTREAM = os.environ.get("TH_BILIBILI_UPSTREAM", "https://index-transl
 SESSION_DAYS = int(os.environ.get("TH_SESSION_DAYS", "7"))
 
 # 默认限流（每秒请求数 / 突发），可在后台设置页覆盖
-DEFAULT_RATE = {"doubao": (1.5, 4), "bilibili": (4.0, 8)}
+# bilibili 由 4/8 提到 8/16：整页翻译并发批次多，旧值在真实页面下频繁 429 触发重试，体感明显变慢
+DEFAULT_RATE = {"doubao": (1.5, 4), "bilibili": (8.0, 16)}
