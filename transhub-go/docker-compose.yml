@@ -6,8 +6,8 @@ services:
     ports:
       - "8301:8000"
     volumes:
-      # 共享 Python 版数据目录：仅为了首次启动时从 transhub.db 迁移 Key/设置/凭据
-      - ../transhub/data:/data
+      # 自有数据目录（transhub.db 为旧 Python 库存档）
+      - ./data:/data
     environment:
       - TZ=Asia/Shanghai
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
