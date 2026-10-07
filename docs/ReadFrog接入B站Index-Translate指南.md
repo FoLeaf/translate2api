@@ -130,3 +130,9 @@ ReadFrog 社区已经动起来了：issue #2309《添加Bilibili免费模型》�
 - translate_stream 对来源 IP 有 **60000 tokens/分钟**硬配额（429 响应体原文：TPM limit of 60000 tokens/min exceeded），耗尽后全量 429，每秒约回填 1000 tokens；并发本身无限制（16 路并发大文本 1.5 秒级完成）。
 - 云端网关已按此配额在入口配速：估算 token 排队消化（等待上限 8 秒），差距过大回 429 并带按真实缺口计算的 Retry-After；上游实际 429 时同步清零本地预算。配额值可经环境变量 TH_BILI_TPM 调整。
 - 体感参考：普通页面（40 段约 5k token）一次成型无感知；160 段大页面约 20k token，单页没问题，连续翻译多个大页面会进入每分钟配额节奏（约 2 请求/秒），网关排队消化，段落不会丢。
+
+### 后续：/v1 已自行恢复（2026-10-07 晚收尾）
+
+- /v1/chat/completions 在故障约两小时五十分钟后自行恢复（2B/35B 实测 200，0.7-1.3 秒），网关 chat 路径已回归官方通道直通。
+- translate_stream 适配层与 TPM 配速器保留在代码中但未接线（bilibiliadapter.go），上游再故障时把 gateway.go 的 chat 分支接回 ProxyChat 即可。
+- 上文的配额与配速描述仅在走 translate_stream 时适用，官方 /v1 通道实测无此约束（160 段大页面 2.9 秒零 429）。
