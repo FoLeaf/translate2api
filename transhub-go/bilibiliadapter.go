@@ -11,9 +11,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,6 +61,79 @@ func lastUserContent(req *openaiChatRequest) string {
 		}
 	}
 	return ""
+}
+
+// ---------------- 上游 TPM 配速器 ----------------
+// translate_stream 对来源 IP 有 60000 tokens/分钟的硬配额（429 响应体原文
+// "TPM limit of 60000 tokens/min exceeded"），耗尽后全量 429、每秒仅回填约
+// 1000 tokens。网关按估算 token 在入口配速排队，避免客户端 429 风暴与
+// ReadFrog 的 8 次放弃丢段；预算参数可经 TH_BILI_TPM 调整。
+
+type biliTPMPacer struct {
+	mu     sync.Mutex
+	tokens float64
+	last   time.Time
+}
+
+var biliPacer = &biliTPMPacer{}
+
+func biliTPM() float64 {
+	if v := envInt("TH_BILI_TPM", 60000); v > 0 {
+		return float64(v)
+	}
+	return 60000
+}
+
+// estTokens 保守估算一次调用的 token 消耗（输入约 4 字符/token，输出加成）。
+func estTokens(text string) float64 {
+	return float64(len(text))*0.4 + 150
+}
+
+// acquire 申请 cost 个 token：等待不超过 waitCap，成功返回 0；
+// 预算差距超过等待上限时返回建议的 Retry-After 时长（调用方回 429）。
+func (p *biliTPMPacer) acquire(cost, waitCap time.Duration) time.Duration {
+	deadline := time.Now().Add(waitCap)
+	for {
+		p.mu.Lock()
+		now := time.Now()
+		rate := biliTPM() / 60.0
+		if p.tokens == 0 && p.last.IsZero() {
+			p.tokens = biliTPM() // 满额起步
+			p.last = now
+		}
+		p.tokens += now.Sub(p.last).Seconds() * rate
+		if p.tokens > biliTPM() {
+			p.tokens = biliTPM()
+		}
+		p.last = now
+		avail := p.tokens - cost
+		if avail >= 0 {
+			p.tokens = avail
+			p.mu.Unlock()
+			return 0
+		}
+		need := -avail / rate
+		p.mu.Unlock()
+		if time.Now().Add(time.Duration(need * float64(time.Second))).After(deadline) {
+			return time.Duration(need * float64(time.Second))
+		}
+		sleep := time.Duration(need * float64(time.Second))
+		if sleep > 500*time.Millisecond {
+			sleep = 500 * time.Millisecond
+		}
+		if sleep < 50*time.Millisecond {
+			sleep = 50 * time.Millisecond
+		}
+		time.Sleep(sleep)
+	}
+}
+
+// penalize 上游实际 429 时把预算压回 0，与上游计数同步。
+func (p *biliTPMPacer) penalize() {
+	p.mu.Lock()
+	p.tokens = 0
+	p.last = time.Now()
+	p.mu.Unlock()
 }
 
 // ProxyChat 处理 OpenAI 兼容的 chat/completions：翻译到 translate_stream 再回填。
@@ -116,6 +191,18 @@ func (s *BiliService) ProxyChat(w http.ResponseWriter, r *http.Request) ProxyOut
 		req.Header.Set("Cookie", c)
 	}
 
+	// 上游 TPM 配速：估算 token 排队等待，差距过大回 429 带 Retry-After
+	if ra := biliPacer.acquire(estTokens(text), 8*time.Second); ra > 0 {
+		sec := int(ra.Seconds()) + 1
+		if sec > 30 {
+			sec = 30
+		}
+		writeJSON(w, 429, map[string]any{"error": map[string]any{
+			"message": "上游 token 配额紧张，请稍后重试", "type": "rate_limit_error"}},
+			map[string]string{"Retry-After": fmt.Sprint(sec)})
+		return ProxyOutcome{Status: 429}
+	}
+
 	resp, err := s.hc.Do(req)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": map[string]any{
@@ -136,6 +223,7 @@ func (s *BiliService) ProxyChat(w http.ResponseWriter, r *http.Request) ProxyOut
 		// 大页面多轮退避堆出 60 秒以上尾巴），补头让客户端秒级重试
 		if resp.StatusCode == 429 {
 			h.Set("Retry-After", "1")
+			biliPacer.penalize()
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(body)
