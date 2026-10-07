@@ -44,9 +44,13 @@ docker logs -f transhub                        # 没设 .env 的话，随机密�
 | | 豆包 | B站 |
 |---|---|---|
 | 服务商类型 | 纯翻译服务商 DeepLX | OpenAI 兼容（自定义） |
-| Base URL | `http://<服务器>:8300/doubao/translate` | `http://<服务器>:8300/bilibili/v1` |
-| API Key | 后台创建的 `th-...` | 同左 |
+| Base URL | `http://<服务器>:8300/doubao/{{apiKey}}/translate` | `http://<服务器>:8300/bilibili/v1` |
+| API Key | 后台创建的 `th-...`（必填，用于替换 URL 里的占位符） | 同左 |
 | 模型 | — | `Index-Translate-35B-A3B` |
+
+> 陪读蛙的 DeepLX 服务商不发鉴权头，API Key 只能经 Base URL 里的 `{{apiKey}}`
+> 占位符（替换自 API Key 字段）嵌进路径，网关已支持从路径读取 Key；
+> 会带 `Authorization: Bearer` 头的客户端也可以直填 `http://<服务器>:8300/doubao/translate`。
 
 请求控制建议：每秒 ≤2、突发 ≤4（豆包线路防风控）。
 

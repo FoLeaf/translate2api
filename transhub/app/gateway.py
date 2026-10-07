@@ -2,10 +2,12 @@
 """对外翻译网关：给 ReadFrog 等客户端调用的公开端点。
 
 路由约定（一个服务商一个前缀，新增服务商自动挂新前缀不需要改这里）：
-- POST /doubao/translate       DeepLX 协议（ReadFrog「纯翻译服务商 DeepLX」）
-- ANY  /bilibili/{path}        OpenAI 兼容透传（ReadFrog「OpenAI 兼容(自定义)」）
+- POST /doubao/translate            DeepLX 协议（ReadFrog「纯翻译服务商 DeepLX」）
+- POST /doubao/{api_key}/translate  同上，API Key 放路径段（ReadFrog {{apiKey}} 占位符替换后的形态）
+- ANY  /bilibili/{path}             OpenAI 兼容透传（ReadFrog「OpenAI 兼容(自定义)」）
 鉴权：一旦后台创建过 API Key，则所有网关端点都要求携带；
-      兼容 Authorization: Bearer / DeepL-Auth-Key / 裸 key。
+      DeepLX 端点两种携带方式都支持：Authorization 头（Bearer / DeepL-Auth-Key / 裸 key）
+      或 /doubao/{api_key}/... 的路径段（ReadFrog 的 DeepLX 客户端不发鉴权头，只能走路径）。
 """
 from __future__ import annotations
 
@@ -43,10 +45,14 @@ def _unauthorized() -> JSONResponse:
                         "Authorization: Bearer <key> 携带"}, status_code=401, headers=_cors())
 
 
-def _check_key(request: Request) -> JSONResponse | None:
+def _check_key(request: Request, path_key: str | None = None) -> JSONResponse | None:
     if not db.key_enabled_exists():
         return None
-    name = security.check_api_key_from_header(request.headers.get("authorization"))
+    if path_key is not None:
+        # ReadFrog 的 DeepLX 客户端不发鉴权头，Key 只能经 {{apiKey}} 占位符嵌进 URL 路径
+        name = db.verify_api_key(path_key.strip())
+    else:
+        name = security.check_api_key_from_header(request.headers.get("authorization"))
     if name is None:
         return _unauthorized()
     return None
@@ -63,8 +69,8 @@ async def doubao_preflight():
     return Response(status_code=204, headers=_cors())
 
 
-async def _deeplx(request: Request, provider_id: str):
-    deny = _check_key(request)
+async def _deeplx(request: Request, provider_id: str, path_key: str | None = None):
+    deny = _check_key(request, path_key)
     if deny is not None:
         return deny
     provider = get_provider(provider_id)
@@ -122,6 +128,22 @@ async def doubao_translate(request: Request):
 @router.post("/doubao")
 async def doubao_alias(request: Request):
     return await _deeplx(request, "doubao")
+
+
+@router.options("/doubao/{api_key}/translate")
+@router.options("/doubao/{api_key}")
+async def doubao_key_preflight():
+    return Response(status_code=204, headers=_cors())
+
+
+@router.post("/doubao/{api_key}/translate")
+async def doubao_translate_key_in_path(request: Request, api_key: str):
+    return await _deeplx(request, "doubao", path_key=api_key)
+
+
+@router.post("/doubao/{api_key}")
+async def doubao_alias_key_in_path(request: Request, api_key: str):
+    return await _deeplx(request, "doubao", path_key=api_key)
 
 
 @router.options("/bilibili/{path:path}")

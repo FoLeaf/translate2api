@@ -156,7 +156,8 @@ async def admin_api_overview(request: Request):
         "key_required": db.key_enabled_exists(),
         "key_count": len(db.list_api_keys()),
         "base_urls": {
-            "doubao_deeplx": f"{base}/doubao/translate",
+            # ReadFrog 的 DeepLX 客户端不发鉴权头，Key 需经 {{apiKey}} 占位符嵌进 URL 路径
+            "doubao_deeplx": f"{base}/doubao/" + "{{apiKey}}" + "/translate",
             "bilibili_openai": f"{base}/bilibili/v1",
         },
     }
