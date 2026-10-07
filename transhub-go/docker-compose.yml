@@ -11,7 +11,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      # 豆包上游间歇停滞治理：45 秒读超时 + 自动重试一次（在代码内实现）
+      # 豆包上游间歇停滞治理：45 秒读超时；上游错误不重试直接返回客户端
       # 入口排队参数（默认）：等待 12 秒 / 全局 48 / 单 Key 12
       - TH_DOUBAO_QUEUE_WAIT=12
       - TH_DOUBAO_QUEUE_CAP=48
