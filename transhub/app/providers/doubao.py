@@ -185,6 +185,36 @@ class DoubaoProvider(TranslationProvider):
                            "account": data.get("account", "")},
         }
 
+    async def deeplx_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        target = to_doubao_lang(target_lang)
+        if not target:
+            raise ProviderError("不支持的目标语言: %r（豆包支持 19 种语言码）" % target_lang,
+                                code=400, http_status=400)
+        chunks = split_chunks(text)
+        if len(chunks) == 1:
+            # 普通段落（整页翻译的主体）走凑批，多段合一次上游调用
+            return await _translate_batched(chunks[0], target)
+        # 超长文本按行切块后逐块直发，不凑批，避免单次调用过大
+        out = []
+        for chunk in chunks:
+            items = await _upstream_call([chunk], target)
+            if 0 not in items:
+                raise ProviderError("该批没有 index=0 的译文，收到下标: %s" % sorted(items))
+            out.append(items[0])
+        return "\n".join(out)
+
+    async def test(self) -> dict:
+        s = await self.status()
+        if not s["ok"]:
+            return {"ok": False, "detail": s["detail"]}
+        try:
+            t0 = time.time()
+            res = await self.deeplx_translate("Hello world", "EN", "ZH")
+            return {"ok": True, "detail": f"翻译成功（{time.time()-t0:.1f}s）: {res[:60]}"}
+        except ProviderError as e:
+            return {"ok": False, "detail": str(e)}
+
+
 # ---------------- 凑批发上游：整页翻译是多段小请求，上游 raw_text 本身是数组，
 # 实测一次带 8 段与带 1 段耗时几乎相同（2.2 秒对 1.9 秒），按 index 全量返回译文
 BATCH_WINDOW = 0.3       # 凑批窗口（秒）：首个请求到达后等这么久凑同批
@@ -279,33 +309,3 @@ async def _flush(target: str) -> None:
         for e in batch:
             if not e["fut"].done():
                 e["fut"].set_exception(ex)
-
-
-    async def deeplx_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        target = to_doubao_lang(target_lang)
-        if not target:
-            raise ProviderError("不支持的目标语言: %r（豆包支持 19 种语言码）" % target_lang,
-                                code=400, http_status=400)
-        chunks = split_chunks(text)
-        if len(chunks) == 1:
-            # 普通段落（整页翻译的主体）走凑批，多段合一次上游调用
-            return await _translate_batched(chunks[0], target)
-        # 超长文本按行切块后逐块直发，不凑批，避免单次调用过大
-        out = []
-        for chunk in chunks:
-            items = await _upstream_call([chunk], target)
-            if 0 not in items:
-                raise ProviderError("该批没有 index=0 的译文，收到下标: %s" % sorted(items))
-            out.append(items[0])
-        return "\n".join(out)
-
-    async def test(self) -> dict:
-        s = await self.status()
-        if not s["ok"]:
-            return {"ok": False, "detail": s["detail"]}
-        try:
-            t0 = time.time()
-            res = await self.deeplx_translate("Hello world", "EN", "ZH")
-            return {"ok": True, "detail": f"翻译成功（{time.time()-t0:.1f}s）: {res[:60]}"}
-        except ProviderError as e:
-            return {"ok": False, "detail": str(e)}
