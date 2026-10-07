@@ -117,3 +117,10 @@ ReadFrog 社区已经动起来了：issue #2309《添加Bilibili免费模型》�
 - 所有被翻译的文本会发送到 B站服务器，**别拿它翻敏感内容**。
 - 若哪天突然集体 412/403，先怀疑官方加了校验，去官方仓库 issue 区看看。
 - linux.do 帖子本身被 Cloudflare 盾拦着，我是通过搜索引擎+你补充的评论区脚本+官方 GitHub 还原的全部信息，帖子正文如还有其他接口细节，以帖子和官方仓库为准。
+
+## 2026-10-07：上游 /v1 接口故障与网关适配
+
+- B站 2026-10-05 部署后，`/v1/chat/completions` 对全部模型（2B/9B/35B-A3B）返回 500（`server: uvicorn` 的 Internal Server Error），复刻官方 call_api.py 的完整报文也一样；`/v1/models` 仍 200。截至本日仓库 issues 无人报告，只能等上游修复。
+- 网页端（/?p=/site/translate.html）不受影响：它走的是 `/?p=/translate_stream` 端点，报文为 `{text, source_lang, target_lang, model, stream}`，模型更名为 `index-mt-2b / index-mt-9b / index-mt-35b`，返回标准 OpenAI chunk 形态的 SSE。
+- 云端网关已适配：对外 OpenAI 兼容接口不变（ReadFrog 零改动），对内改调 translate_stream；旧模型名（Index-Translate-2B 等）自动映射到对应 index-mt 档位；目标语言默认 zh，可在后台设置 `bili_target_lang` 覆盖；上游错误依旧原样直返。
+- **本地脚本方案（bilibili-index-translate-proxy.py）直连 /v1，同样受此故障影响**，待上游修复后自动恢复；急需使用请走云端网关或网页端。
