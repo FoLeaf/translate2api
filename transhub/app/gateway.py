@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import time
 
 from fastapi import APIRouter, Request
@@ -20,6 +21,16 @@ from . import config, db, security
 from .providers import ProviderError, get as get_provider
 
 router = APIRouter()
+
+# 豆包入口排队信号量：上游串行消化，入口排队等待而非直接拒绝（惰性创建）
+_doubao_queue: asyncio.Semaphore | None = None
+
+
+def _get_doubao_queue() -> asyncio.Semaphore:
+    global _doubao_queue
+    if _doubao_queue is None:
+        _doubao_queue = asyncio.Semaphore(config.DOUBAO_QUEUE_CAP)
+    return _doubao_queue
 
 
 def _cors(headers: dict | None = None) -> dict:
@@ -91,33 +102,42 @@ async def _deeplx(request: Request, provider_id: str, path_key: str | None = Non
         return JSONResponse({"code": 400, "message": "缺少 text 字段"},
                             status_code=400, headers=_cors())
 
-    if not security.rate_allow(provider_id, config.DEFAULT_RATE.get(provider_id, (5, 10))):
-        db.log_usage(provider_id, "deeplx", False, code=429, ip=_client_ip(request), msg="rate limited")
-        return JSONResponse({"code": 429, "message": "请求过于频繁，已被限流"},
-                            status_code=429, headers=_cors())
+    # 入口排队：上游串行消化能力有限，令牌桶直接拒绝会让 ReadFrog 整队列退避
+    # （无 Retry-After 头时 5 秒起步翻倍），累计 8 次 429 后放弃段落；
+    # 改为在网关内排队等待，超限才拒绝并带 Retry-After 让客户端精准重试。
+    queue = _get_doubao_queue()
+    try:
+        await asyncio.wait_for(queue.acquire(), timeout=config.DOUBAO_QUEUE_WAIT)
+    except asyncio.TimeoutError:
+        db.log_usage(provider_id, "deeplx", False, code=429, ip=_client_ip(request), msg="queue wait timeout")
+        return JSONResponse({"code": 429, "message": "排队超时，请稍后重试"},
+                            status_code=429, headers=_cors({"Retry-After": "2"}))
 
     try:
-        data = await provider.deeplx_translate(text, req.get("source_lang"), req.get("target_lang"))
-    except ProviderError as e:
-        db.log_usage(provider_id, "deeplx", False, code=e.code, ms=int((time.time()-t0)*1000),
-                     ip=_client_ip(request), msg=e.msg)
-        return JSONResponse({"code": e.code, "message": e.msg},
-                            status_code=e.http_status, headers=_cors())
-    except Exception as e:  # noqa: BLE001
-        db.log_usage(provider_id, "deeplx", False, code=500, ms=int((time.time()-t0)*1000),
-                     ip=_client_ip(request), msg=repr(e)[:200])
-        return JSONResponse({"code": 500, "message": "网关内部错误"}, status_code=500, headers=_cors())
+        try:
+            data = await provider.deeplx_translate(text, req.get("source_lang"), req.get("target_lang"))
+        except ProviderError as e:
+            db.log_usage(provider_id, "deeplx", False, code=e.code, ms=int((time.time()-t0)*1000),
+                         ip=_client_ip(request), msg=e.msg)
+            return JSONResponse({"code": e.code, "message": e.msg},
+                                status_code=e.http_status, headers=_cors())
+        except Exception as e:  # noqa: BLE001
+            db.log_usage(provider_id, "deeplx", False, code=500, ms=int((time.time()-t0)*1000),
+                         ip=_client_ip(request), msg=repr(e)[:200])
+            return JSONResponse({"code": 500, "message": "网关内部错误"}, status_code=500, headers=_cors())
 
-    db.log_usage(provider_id, "deeplx", True, chars=len(text),
-                 ms=int((time.time()-t0)*1000), ip=_client_ip(request))
-    return JSONResponse({
-        "code": 200,
-        "id": int(time.time() * 1000),
-        "data": data,
-        "method": "transhub-%s" % provider_id,
-        "source_lang": req.get("source_lang", "auto"),
-        "target_lang": req.get("target_lang", ""),
-    }, headers=_cors())
+        db.log_usage(provider_id, "deeplx", True, chars=len(text),
+                     ms=int((time.time()-t0)*1000), ip=_client_ip(request))
+        return JSONResponse({
+            "code": 200,
+            "id": int(time.time() * 1000),
+            "data": data,
+            "method": "transhub-%s" % provider_id,
+            "source_lang": req.get("source_lang", "auto"),
+            "target_lang": req.get("target_lang", ""),
+        }, headers=_cors())
+    finally:
+        queue.release()
 
 
 @router.post("/doubao/translate")
@@ -163,7 +183,7 @@ async def bilibili_proxy(request: Request, path: str):
     if not security.rate_allow("bilibili", config.DEFAULT_RATE.get("bilibili", (5, 10))):
         db.log_usage("bilibili", path, False, code=429, ip=_client_ip(request), msg="rate limited")
         return JSONResponse({"code": 429, "message": "请求过于频繁，已被限流"},
-                            status_code=429, headers=_cors())
+                            status_code=429, headers=_cors({"Retry-After": "1"}))
 
     t0 = time.time()
     body = await request.body()

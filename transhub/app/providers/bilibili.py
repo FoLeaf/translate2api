@@ -21,6 +21,8 @@ STRIP_REQ = {
     "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-authorization",
     "proxy-connection", "accept-encoding", "x-forwarded-for", "x-forwarded-host",
     "x-forwarded-proto", "x-real-ip", "true-client-ip", "cdn-loop",
+    # 网关鉴权头绝不外发：剥离后上游只见干净的翻译请求，避免网关密钥泄露
+    "authorization", "deepl-auth-key", "x-api-key", "api-key",
 }
 STRIP_RESP = {
     "content-length", "transfer-encoding", "connection", "keep-alive",

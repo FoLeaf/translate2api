@@ -34,6 +34,20 @@ KNOWN_LOW = {"en", "ar", "de", "es", "es-es", "fil", "fr", "id", "it", "ja", "ko
 # 上游调用串行化：避免共享 cookie 状态与并发触发风控
 _upstream_lock = asyncio.Lock()
 
+# 共享连接池：上游串行调用，连接常驻复用，省去每个请求、每个分块重建 TCP+TLS
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=15, read=180, write=60, pool=15),
+            limits=httpx.Limits(max_connections=4, max_keepalive_connections=4,
+                                keepalive_expiry=120),
+        )
+    return _client
+
 
 def to_doubao_lang(code) -> str | None:
     if not code:
@@ -201,12 +215,11 @@ class DoubaoProvider(TranslationProvider):
                     "Referer": config.DOUBAO_UPSTREAM + "/",
                     "Cookie": cookie,
                 }
-                async with httpx.AsyncClient(timeout=httpx.Timeout(180)) as client:
-                    try:
-                        resp = await client.post(config.DOUBAO_UPSTREAM + STREAM_PATH,
-                                                 content=body, headers=headers)
-                    except httpx.HTTPError as e:
-                        raise ProviderError("网络错误: %s" % e, code=-1, http_status=504)
+                try:
+                    resp = await _get_client().post(config.DOUBAO_UPSTREAM + STREAM_PATH,
+                                                    content=body, headers=headers)
+                except httpx.HTTPError as e:
+                    raise ProviderError("网络错误: %s" % e, code=-1, http_status=504)
                 try:
                     items = read_doubao_stream(resp.content, resp.headers.get("content-type", ""))
                 except ProviderError as e:
