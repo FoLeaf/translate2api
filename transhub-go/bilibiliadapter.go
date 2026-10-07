@@ -91,7 +91,7 @@ func estTokens(text string) float64 {
 
 // acquire 申请 cost 个 token：等待不超过 waitCap，成功返回 0；
 // 预算差距超过等待上限时返回建议的 Retry-After 时长（调用方回 429）。
-func (p *biliTPMPacer) acquire(cost, waitCap time.Duration) time.Duration {
+func (p *biliTPMPacer) acquire(cost float64, waitCap time.Duration) time.Duration {
 	deadline := time.Now().Add(waitCap)
 	for {
 		p.mu.Lock()
