@@ -281,16 +281,11 @@ func bilibiliHandler(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 {
 		bodyLen = r.ContentLength
 	}
-	var outcome ProxyOutcome
-	if path == "v1/chat/completions" || path == "chat/completions" {
-		// OpenAI chat 走适配层：上游 /v1 已故障，改接网页端 translate_stream
-		outcome = biliSvc.ProxyChat(w, r)
-		if outcome.Bytes > 0 {
-			bodyLen = outcome.Bytes
-		}
-	} else {
-		outcome = biliSvc.Proxy(w, r, path)
-	}
+	// /v1/chat/completions 已于 2026-10-07 晚恢复，回归官方通道直通；
+	// translate_stream 适配层（ProxyChat，见 bilibiliadapter.go）保留不接线，
+	// 上游再故障时把它接回即可
+	var outcome ProxyOutcome = biliSvc.Proxy(w, r, path)
+	_ = bodyLen
 	okv := outcome.Status < 400
 	msg := outcome.Err
 	if !okv && msg != "" {
