@@ -18,7 +18,7 @@ services:
       - TH_DOUBAO_KEY_CAP=12
       - TH_DOUBAO_TIMEOUT=45
       - TH_DOUBAO_BATCH_MAX=8
-      - TH_BILIBILI_UPSTREAM_CONC=8
+      - TH_BILIBILI_UPSTREAM_CONC=16
       - TH_TRUSTED_PROXIES=127.0.0.1
     shm_size: 256m
     mem_limit: 700m

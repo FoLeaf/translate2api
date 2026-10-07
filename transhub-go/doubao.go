@@ -4,7 +4,7 @@ package main
 // 设计要点：
 // - 上游串行调用（共享 Cookie，防风控），凑批摊薄成本：一次带多段与单段耗时几乎相同
 // - 单次调用总超时 45 秒（上游间歇停滞实测 121-189 秒，尽早失败释放锁）
-// - 网络类错误自动重试一次（间歇停滞大概率重试即过）
+// - 上游错误不做重试与加工，单次调用直接把结果返回客户端（重试交给 ReadFrog 客户端）
 // - 凑批按 Key 轮询取段，单 Key 整页翻译不会占满批次饿死其他 Key
 
 import (
@@ -346,43 +346,33 @@ func (s *DoubaoService) callUpstream(texts []string, target string) (map[int]str
 	s.serial.Lock()
 	defer s.serial.Unlock()
 
-	var lastErr *ProviderError
-	for attempt := 0; attempt < 2; attempt++ {
-		if attempt == 1 {
-			time.Sleep(1 * time.Second) // 间歇停滞大概率重试即过
-		}
-		req, err := http.NewRequest(http.MethodPost, cfg.DoubaoUpstream+doubaoStreamPath, bytes.NewReader(body))
-		if err != nil {
-			return nil, providerErr("构造上游请求失败: "+err.Error(), -1, 500)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("User-Agent", doubaoUA)
-		req.Header.Set("Referer", cfg.DoubaoUpstream+"/")
-		req.Header.Set("Cookie", cookie)
-
-		resp, err := s.hc.Do(req)
-		if err != nil {
-			lastErr = providerErr("网络错误: "+err.Error(), -1, 504)
-			continue // 网络错误重试一次
-		}
-		raw, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = providerErr("读取上游响应失败: "+readErr.Error(), -1, 504)
-			continue
-		}
-		items, perr := readDoubaoStream(raw, resp.Header.Get("Content-Type"))
-		if perr != nil {
-			if perr.CredentialExpired {
-				s.invalidateCredential()
-				_ = store.SetCredentialStatus("doubao", "expired")
-			}
-			return nil, perr
-		}
-		return items, nil
+	req, err := http.NewRequest(http.MethodPost, cfg.DoubaoUpstream+doubaoStreamPath, bytes.NewReader(body))
+	if err != nil {
+		return nil, providerErr("构造上游请求失败: "+err.Error(), -1, 500)
 	}
-	return nil, lastErr
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("User-Agent", doubaoUA)
+	req.Header.Set("Referer", cfg.DoubaoUpstream+"/")
+	req.Header.Set("Cookie", cookie)
+
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return nil, providerErr("网络错误: "+err.Error(), -1, 504)
+	}
+	raw, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, providerErr("读取上游响应失败: "+readErr.Error(), -1, 504)
+	}
+	items, perr := readDoubaoStream(raw, resp.Header.Get("Content-Type"))
+	if perr != nil {
+		if perr.CredentialExpired {
+			s.invalidateCredential()
+		}
+		return nil, perr
+	}
+	return items, nil
 }
 
 // Translate 对外入口：普通段落走凑批，超长文本逐块直发。
