@@ -1,0 +1,24 @@
+services:
+  transhub-go:
+    build: .
+    container_name: transhub-go
+    restart: unless-stopped
+    ports:
+      - "8301:8000"
+    volumes:
+      # 共享 Python 版数据目录：仅为了首次启动时从 transhub.db 迁移 Key/设置/凭据
+      - ../transhub/data:/data
+    environment:
+      - TZ=Asia/Shanghai
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # 豆包上游间歇停滞治理：45 秒读超时 + 自动重试一次（在代码内实现）
+      # 入口排队参数（默认）：等待 12 秒 / 全局 48 / 单 Key 12
+      - TH_DOUBAO_QUEUE_WAIT=12
+      - TH_DOUBAO_QUEUE_CAP=48
+      - TH_DOUBAO_KEY_CAP=12
+      - TH_DOUBAO_TIMEOUT=45
+      - TH_DOUBAO_BATCH_MAX=8
+      - TH_BILIBILI_UPSTREAM_CONC=8
+      - TH_TRUSTED_PROXIES=127.0.0.1
+    shm_size: 256m
+    mem_limit: 700m

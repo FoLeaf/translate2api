@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>译枢 · TransHub Go</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--line:#e3e6ea;--text:#22272e;--muted:#7a828c;--accent:#2b6cb0;--ok:#2f9e44;--bad:#d64545}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+.wrap{max-width:960px;margin:0 auto;padding:24px 16px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 10px}
+.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.tabs button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:500}
+input,select,button{font:inherit}
+input[type=text],input[type=password],input[type=number]{border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:100%}
+button.act{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer}
+button.ghost{background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px 14px;cursor:pointer}
+button.mini{padding:2px 10px;font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+code{background:#eef1f4;border-radius:4px;padding:1px 6px;font-size:12px;word-break:break-all}
+#login{max-width:340px;margin:80px auto}
+.tag{display:inline-block;border-radius:5px;padding:1px 8px;font-size:12px}
+.tag.on{background:#e6f4ea;color:var(--ok)}.tag.off{background:#fdecec;color:var(--bad)}
+img.qr{max-width:280px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div id="login" class="card hide">
+  <h2>管理员登录</h2>
+  <div class="row"><input type="password" id="pw" placeholder="管理员密码" onkeydown="if(event.key==='Enter')doLogin()"></div>
+  <div class="row"><button class="act" onclick="doLogin()">登录</button> <span id="loginMsg" class="muted"></span></div>
+</div>
+<div class="wrap hide" id="main">
+  <h1>译枢 · TransHub <span class="muted" style="font-size:12px">Go 版</span></h1>
+  <div class="sub" id="subLine"></div>
+  <div class="tabs">
+    <button data-t="overview" class="on">概览</button>
+    <button data-t="keys">API Key</button>
+    <button data-t="usage">用量</button>
+    <button data-t="settings">设置</button>
+  </div>
+  <div id="tab-overview"></div>
+  <div id="tab-keys" class="hide"></div>
+  <div id="tab-usage" class="hide"></div>
+  <div id="tab-settings" class="hide"></div>
+</div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+const api=async(u,opt={})=>{
+  const r=await fetch(u,{...opt,headers:{'Content-Type':'application/json','X-Requested-With':'fetch',...(opt.headers||{})}});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401){showLogin();throw new Error('未登录')}
+  return j;
+};
+function showLogin(){$('#login').classList.remove('hide');$('#main').classList.add('hide')}
+async function doLogin(){
+  const r=await fetch('/admin/api/login',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},body:JSON.stringify({password:$('#pw').value})});
+  const j=await r.json();
+  if(j.ok){$('#login').classList.add('hide');$('#main').classList.remove('hide');loadOverview();}
+  else $('#loginMsg').textContent=j.detail||'登录失败';
+}
+$$('.tabs button').forEach(b=>b.onclick=()=>{
+  $$('.tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  ['overview','keys','usage','settings'].forEach(t=>$('#tab-'+t).classList.toggle('hide',t!==b.dataset.t));
+  ({overview:loadOverview,keys:loadKeys,usage:loadUsage,settings:loadSettings})[b.dataset.t]();
+});
+const fmtTs=t=>t?new Date(t*1000).toLocaleString():'-';
+
+async function loadOverview(){
+  const j=await api('/admin/api/overview');
+  const p=j.providers.map(p=>`
+    <div class="card"><h2>${p.name} <span class="${p.status.ok?'ok':'bad'}">${p.status.ok?'正常':'异常'}</span></h2>
+    <div class="muted">${p.desc}</div>
+    <div style="margin-top:6px">${p.status.detail||''}</div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost mini" onclick="testProvider('${p.id}',this)">测试</button>
+      <span class="muted mini" id="test-${p.id}"></span></div></div>`).join('');
+  const s=(j.stats||[]).map(x=>`<tr><td>${x.provider}</td><td>${x.cnt}</td><td class="ok">${x.ok}</td><td>${Math.round(x.avg_ms)}ms</td></tr>`).join('');
+  $('#subLine').textContent=`Key 数 ${j.key_count} · ${j.key_required?'已启用鉴权':'当前开放访问'}`;
+  $('#tab-overview').innerHTML=p+`
+    <div class="card"><h2>接入地址</h2>
+      <div class="row"><code>${j.base_urls.doubao_deeplx}</code>（豆包 DeepLX）</div>
+      <div class="row"><code>${j.base_urls.bilibili_openai}</code>（B站 OpenAI 兼容）</div></div>
+    <div class="card"><h2>近 24 小时用量</h2>
+      <table><tr><th>线路</th><th>请求</th><th>成功</th><th>平均耗时</th></tr>${s}</table></div>`;
+}
+async function testProvider(pid,btn){
+  const j=await api(`/admin/api/providers/${pid}/test`,{method:'POST'});
+  document.getElementById('test-'+pid).textContent=j.detail;
+}
+
+async function loadKeys(){
+  const j=await api('/admin/api/keys');
+  const rows=(j.keys||[]).map(k=>`<tr>
+    <td>${k.id}</td><td>${k.name}</td><td><code>${k.prefix}</code></td>
+    <td><span class="tag ${k.enabled?'on':'off'}">${k.enabled?'启用':'停用'}</span></td>
+    <td class="muted">${fmtTs(k.last_used_at)}</td>
+    <td><button class="ghost mini" onclick="toggleKey(${k.id})">${k.enabled?'停用':'启用'}</button>
+        <button class="ghost mini" onclick="delKey(${k.id})">删除</button></td></tr>`).join('');
+  $('#tab-keys').innerHTML=`
+    <div class="card"><h2>新建 Key</h2>
+      <div class="row"><input type="text" id="newKeyName" placeholder="名称（如 小明）" style="max-width:200px">
+      <button class="act" onclick="createKey()">创建</button></div>
+      <div id="newKeyOut" class="hide" style="margin-top:8px"><code id="newKeyVal"></code><div class="muted">请立即复制保存，明文不再二次展示</div></div></div>
+    <div class="card"><h2>Key 列表</h2>${j.key_required?'':'<div class="bad">尚未创建任何启用的 Key，网关当前完全开放！</div>'}
+      <table><tr><th>ID</th><th>名称</th><th>前缀</th><th>状态</th><th>最近使用</th><th></th></tr>${rows}</table></div>`;
+}
+async function createKey(){
+  const j=await api('/admin/api/keys',{method:'POST',body:JSON.stringify({name:$('#newKeyName').value})});
+  if(j.ok){$('#newKeyOut').classList.remove('hide');$('#newKeyVal').textContent=j.key;loadKeys();}
+}
+async function toggleKey(id){await api(`/admin/api/keys/${id}/toggle`,{method:'POST'});loadKeys()}
+async function delKey(id){if(confirm('确认删除该 Key？')){await api(`/admin/api/keys/${id}`,{method:'DELETE'});loadKeys()}}
+
+async function loadUsage(){
+  const j=await api('/admin/api/usage?limit=100');
+  const rows=(j.rows||[]).map(u=>`<tr>
+    <td class="muted">${fmtTs(u.ts)}</td><td>${u.provider}</td><td>${u.endpoint}</td>
+    <td class="${u.ok?'ok':'bad'}">${u.ok?'成功':u.code}</td>
+    <td>${u.chars??''}</td><td>${u.ms!=null?u.ms+'ms':''}</td><td class="muted">${(u.msg||'').slice(0,60)}</td></tr>`).join('');
+  $('#tab-usage').innerHTML=`<div class="card"><h2>最近 100 条请求</h2>
+    <table><tr><th>时间</th><th>线路</th><th>端点</th><th>结果</th><th>字符</th><th>耗时</th><th>备注</th></tr>${rows}</table></div>`;
+}
+
+async function loadSettings(){
+  $('#tab-settings').innerHTML=`
+    <div class="card"><h2>修改管理员密码</h2>
+      <div class="row"><input type="password" id="oldPw" placeholder="旧密码" style="max-width:200px">
+      <input type="password" id="newPw" placeholder="新密码（至少 8 位）" style="max-width:200px">
+      <button class="act" onclick="changePw()">修改</button><span id="pwMsg" class="muted"></span></div></div>
+    <div class="card"><h2>限流参数</h2><div id="rateBox" class="muted">加载中…</div></div>
+    <div class="card"><h2>豆包 Cookie（手动导入）</h2>
+      <div class="row"><input type="text" id="doubaoCookie" placeholder="粘贴豆包 Cookie（sessionid=…）">
+      <button class="act" onclick="saveCookie('doubao')">保存</button><span id="ck-doubao" class="muted"></span></div></div>
+    <div class="card"><h2>扫码登录</h2>
+      <div class="row"><button class="ghost" onclick="startQR('doubao')">豆包扫码</button>
+      <button class="ghost" onclick="startQR('bilibili')">B站扫码</button>
+      <span id="qrStatus" class="muted"></span></div>
+      <div id="qrBox" style="margin-top:10px"></div></div>`;
+  const j=await api('/admin/api/rate');
+  const r=(j.rates||[]).map(x=>x.provider==='bilibili'
+    ?`<div class="row">B站令牌桶：<input type="number" id="r-rate" value="${x.rate}" step="0.5" style="width:80px"> 请求/秒，
+      突发 <input type="number" id="r-burst" value="${x.burst}" step="1" style="width:80px">
+      <button class="ghost mini" onclick="saveRate()">保存</button></div>`
+    :`<div class="row muted">豆包线路为入口排队 + 上游凑批，参数经环境变量调整</div>`).join('');
+  $('#rateBox').innerHTML=r;
+}
+async function changePw(){
+  const j=await api('/admin/api/password',{method:'POST',body:JSON.stringify({old:$('#oldPw').value,new:$('#newPw').value})});
+  $('#pwMsg').textContent=j.detail||(j.ok?'已修改':'');
+}
+async function saveRate(){
+  const j=await api('/admin/api/rate',{method:'PUT',body:JSON.stringify({
+    provider:'bilibili',rate:parseFloat($('#r-rate').value),burst:parseFloat($('#r-burst').value)})});
+  $('#rateBox').innerHTML+=`<div class="${j.ok?'ok':'bad'}">${j.ok?'已保存':j.detail}</div>`;
+}
+async function saveCookie(pid){
+  const j=await api(`/admin/api/providers/${pid}/credentials/manual`,{method:'POST',body:JSON.stringify({cookie:$('#doubaoCookie').value})});
+  document.getElementById('ck-'+pid).textContent=j.ok?'已保存':j.detail;
+}
+let qrTimer=null;
+async function startQR(pid){
+  if(qrTimer){clearInterval(qrTimer);qrTimer=null}
+  const j=await api(`/admin/api/providers/${pid}/login/start`,{method:'POST'});
+  if(!j.ok){$('#qrStatus').textContent=j.detail;return}
+  const box=$('#qrBox');
+  if(j.mode==='qr_png'){box.innerHTML=`<img class="qr" src="${j.qr_png}">`}
+  else{box.innerHTML=`<img class="qr" id="frameImg" src="/admin/api/providers/${pid}/login/frame">`}
+  $('#qrStatus').textContent=j.detail||'';
+  qrTimer=setInterval(async()=>{
+    const p=await api(`/admin/api/providers/${pid}/login/poll`);
+    $('#qrStatus').textContent=p.detail||p.status;
+    if(j.mode==='frame'){const img=$('#frameImg');if(img)img.src=`/admin/api/providers/${pid}/login/frame?t=${Date.now()}`}
+    if(p.status==='confirmed'||p.status==='expired'||p.status==='error'){
+      clearInterval(qrTimer);qrTimer=null;
+      if(p.status==='confirmed')setTimeout(loadOverview,500);
+    }
+  },1500);
+}
+
+(async()=>{
+  try{const j=await api('/admin/api/overview');if(j.ok){$('#main').classList.remove('hide')}}catch(e){}
+})();
+</script>
+</body>
+</html>
