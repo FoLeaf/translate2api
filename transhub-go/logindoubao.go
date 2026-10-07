@@ -120,7 +120,8 @@ func (f *doubaoLoginFlow) run(ctx context.Context) {
 		f.finish("error", "打开登录页失败: "+err.Error())
 		return
 	}
-	_ = page.SetViewport(1100, 860, 1, false)
+	_ = page.SetViewport(&proto.EmulationSetDeviceMetricsOverride{
+		Width: 1100, Height: 860, DeviceScaleFactor: 1, Mobile: false,	})
 
 	time.Sleep(4 * time.Second)
 	f.setStatus("waiting", "请用豆包 App「扫一扫」扫描页面右侧二维码")
@@ -179,7 +180,7 @@ func (f *doubaoLoginFlow) harvest(page *rod.Page) bool {
 }
 
 func collectCookies(page *rod.Page) []*proto.NetworkCookie {
-	cookies, err := page.Cookies("https://www.doubao.com", "https://accounts.doubao.com")
+	cookies, err := page.Cookies([]string{"https://www.doubao.com", "https://accounts.doubao.com"})
 	if err != nil {
 		return nil
 	}
