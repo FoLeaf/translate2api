@@ -46,11 +46,15 @@ docker logs -f transhub                        # 没设 .env 的话，随机密�
 | 服务商类型 | 纯翻译服务商 DeepLX | OpenAI 兼容（自定义） |
 | Base URL | `http://<服务器>:8300/doubao/{{apiKey}}/translate` | `http://<服务器>:8300/bilibili/v1` |
 | API Key | 后台创建的 `th-...`（必填，用于替换 URL 里的占位符） | 同左 |
-| 模型 | — | `Index-Translate-35B-A3B` |
+| 模型 | — | `Index-Translate-2B`（最快，实测）/ `Index-Translate-9B` / `Index-Translate-35B-A3B` |
 
 > 陪读蛙的 DeepLX 服务商不发鉴权头，API Key 只能经 Base URL 里的 `{{apiKey}}`
 > 占位符（替换自 API Key 字段）嵌进路径，网关已支持从路径读取 Key；
 > 会带 `Authorization: Bearer` 头的客户端也可以直填 `http://<服务器>:8300/doubao/translate`。
+>
+> B站上游 `/v1/models` 只列出 35B-A3B，但实测 `Index-Translate-2B` 与 `Index-Translate-9B`
+> 同样可用（2026-10 实测，服务器本机流式基准：2B 长文总耗时约 0.78s、首字约 0.43s，
+> 35B 约 1.05s、0.56s）。ReadFrog 里模型名手动输入即可，点获取模型列表看不到它们。
 
 请求控制建议：每秒 ≤2、突发 ≤4（豆包线路防风控）。
 
