@@ -149,9 +149,9 @@ func (s *BiliService) Proxy(w http.ResponseWriter, r *http.Request, path string)
 			req.Header.Add(k, v)
 		}
 	}
-	if req.Header.Get("User-Agent") == "" {
-		req.Header.Set("User-Agent", biliDefaultUA)
-	}
+	// 上游 WAF 会按 UA 判机器人（实测 Python-urllib UA 直连必 412），
+	// 客户端 UA 一律不透传，统一用网关自己的浏览器 UA
+	req.Header.Set("User-Agent", biliDefaultUA)
 	req.Header.Set("Accept-Encoding", "identity")
 	if c := s.cookie(); c != "" {
 		req.Header.Set("Cookie", c)
