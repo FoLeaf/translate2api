@@ -1,7 +1,7 @@
 # translate2api
 
 把豆包网页翻译与 B 站 Index-Translate 免费 API 接入 ReadFrog（陪读蛙）浏览器的工具集，
-包含两个零依赖的本地脚本和一个 Docker 化的云端网关项目。
+包含两个零依赖的本地脚本和一个 Docker 化的云端网关项目（Go 实现）。
 
 ## 目录结构
 
@@ -9,10 +9,10 @@
 translate2api/
 ├── doubao2deeplx.py                  # 豆包翻译 → DeepLX 协议本地适配器（仅标准库）
 ├── bilibili-index-translate-proxy.py # B站 Index-Translate 本地代理：剥 Origin 头防 412（仅标准库）
-├── transhub/                         # TransHub 译枢：云端翻译网关（FastAPI + Docker）
-│   ├── app/                          #    网关、后台管理、服务商/登录流插件
-│   ├── Dockerfile / docker-compose.yml
-│   └── README.md                     #    项目说明与部署步骤
+├── transhub-go/                      # TransHub 译枢：云端网关（Go 单二进制 + Docker）
+│   ├── *.go                          #    网关、豆包凑批、B站代理、后台、扫码登录
+│   ├── web/admin.html                #    内嵌后台页面
+│   ├── Dockerfile / docker-compose.yml / README.md
 └── docs/                             # 使用指南
     ├── 豆包翻译接入ReadFrog指南.md
     ├── ReadFrog接入B站Index-Translate指南.md
@@ -34,12 +34,12 @@ translate2api/
 
 豆包 + B站两条线路聚合成一个 Docker 服务：带密码保护的后台、扫码自动获取 Cookie、
 API Key 鉴权、令牌桶限流、用量统计。部署与使用见
-[云端翻译网关部署与使用指南](docs/云端翻译网关部署与使用指南.md) 和 [transhub/README.md](transhub/README.md)。
+[云端翻译网关部署与使用指南](docs/云端翻译网关部署与使用指南.md) 和 [transhub-go/README.md](transhub-go/README.md)。
 
 ```bash
-cd transhub
+cd transhub-go
 docker compose up -d --build
-docker logs -f transhub   # 未设 ADMIN_PASSWORD 时，随机初始密码打印在这里
+docker logs -f transhub-go   # 未设 ADMIN_PASSWORD 时，随机初始密码打印在这里
 ```
 
 ## 免责声明
@@ -48,4 +48,4 @@ docker logs -f transhub   # 未设 ADMIN_PASSWORD 时，随机初始密码打印
 - B站 Index-Translate 免费 API 的开放期限未公布，随时可能调整或下线。
 - 所有被翻译文本会经过本机或服务器与对应上游，请勿翻译敏感内容。
 
-> 2026-10-07 起线上网关为 Go 重写版（transhub-go/，监听 8301，nginx 已切换）；transhub/ 为 Python 原版，保留观察期后下线。
+> 2026-10-07：网关由 Python 重写为 Go 并完成切换上线，Python 版（transhub/）已从仓库与服务器移除，历史见 git；根目录两个本地脚本仍为 Python 标准库实现，属无服务器的本地方案，与云端网关相互独立。
