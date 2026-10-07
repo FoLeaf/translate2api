@@ -125,12 +125,17 @@ func (s *BiliService) ProxyChat(w http.ResponseWriter, r *http.Request) ProxyOut
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		// 上游错误直接返回（含状态码与原文）
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		h := w.Header()
 		h.Set("Content-Type", resp.Header.Get("Content-Type"))
 		for k, v := range corsHeaders(nil) {
 			h.Set(k, v)
+		}
+		// 上游错误直接返回；429 例外补 Retry-After 头：上游的 429 不带该头，
+		// 透传会让客户端按 5 秒起步的指数退避等待（实测配额约 1 秒即恢复，
+		// 大页面多轮退避堆出 60 秒以上尾巴），补头让客户端秒级重试
+		if resp.StatusCode == 429 {
+			h.Set("Retry-After", "1")
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(body)
