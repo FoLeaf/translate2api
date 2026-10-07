@@ -136,3 +136,9 @@ ReadFrog 社区已经动起来了：issue #2309《添加Bilibili免费模型》�
 - /v1/chat/completions 在故障约两小时五十分钟后自行恢复（2B/35B 实测 200，0.7-1.3 秒），网关 chat 路径已回归官方通道直通。
 - translate_stream 适配层与 TPM 配速器保留在代码中但未接线（bilibiliadapter.go），上游再故障时把 gateway.go 的 chat 分支接回 ProxyChat 即可。
 - 上文的配额与配速描述仅在走 translate_stream 时适用，官方 /v1 通道实测无此约束（160 段大页面 2.9 秒零 429）。
+
+### 官方 /v1 通道的 TPM 配额（2026-10-07 压测补充）
+
+- 恢复后的 /v1/chat/completions 实测同样有 60000 tokens/分钟的来源 IP 配额（429 报文与 translate_stream 同款文案），过载时还会返回 B站自家网关的 504 超时页。
+- 网关压测归因：60 路瞬时并发下，网关自身入口桶与信号量零触发，失败全部来自上游——B站线路的性能上限已完全由官方决定。
+- 两个端点的 429 都不带 Retry-After 头，网关统一补 Retry-After: 1（上游自述 1 秒回填），其余状态原样直返；配额热的页面因此按秒级而非指数退避恢复。
