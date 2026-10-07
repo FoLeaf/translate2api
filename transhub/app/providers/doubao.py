@@ -185,50 +185,118 @@ class DoubaoProvider(TranslationProvider):
                            "account": data.get("account", "")},
         }
 
+# ---------------- 凑批发上游：整页翻译是多段小请求，上游 raw_text 本身是数组，
+# 实测一次带 8 段与带 1 段耗时几乎相同（2.2 秒对 1.9 秒），按 index 全量返回译文
+BATCH_WINDOW = 0.3       # 凑批窗口（秒）：首个请求到达后等这么久凑同批
+BATCH_MAX_ITEMS = 8      # 单次上游调用最多段数
+BATCH_MAX_CHARS = 12000  # 单次上游调用 raw_text 总字符上限
+
+_batch_lock = asyncio.Lock()
+_pending: dict[str, list[dict]] = {}  # 按目标语言分组的待凑批队列
+
+
+async def _upstream_call(texts: list[str], target: str) -> dict[int, str]:
+    """串行调用上游一次带多段 raw_text，返回 {index: 译文}。"""
+    cred = db.get_credential("doubao")
+    if not cred:
+        raise ProviderError("未配置豆包 Cookie：请到后台扫码登录", code=710012001,
+                            http_status=401, credential_expired=True)
+    cookie = cred["data"].get("cookie", "")
+    engine = str(db.get_setting("doubao_engine", "1"))
+    scene = int(db.get_setting("doubao_scene", 1))
+    body = json.dumps({
+        "raw_text": texts,
+        "target_lang": target,
+        "translate_service": engine,
+        "scene": scene,
+        "frontend_source": 1,
+    }).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "*/*",
+        "User-Agent": UA,
+        "Referer": config.DOUBAO_UPSTREAM + "/",
+        "Cookie": cookie,
+    }
+    async with _upstream_lock:
+        try:
+            resp = await _get_client().post(config.DOUBAO_UPSTREAM + STREAM_PATH,
+                                            content=body, headers=headers)
+        except httpx.HTTPError as e:
+            raise ProviderError("网络错误: %s" % e, code=-1, http_status=504)
+    try:
+        items = read_doubao_stream(resp.content, resp.headers.get("content-type", ""))
+    except ProviderError as e:
+        if e.credential_expired:
+            db.set_credential_status("doubao", "expired", cred["name"])
+        raise
+    return items
+
+
+def _schedule_flush(target: str) -> None:
+    loop = asyncio.get_running_loop()
+    loop.call_later(BATCH_WINDOW, lambda: asyncio.ensure_future(_flush(target)))
+
+
+async def _translate_batched(text: str, target: str) -> str:
+    """普通段落走凑批：等待窗口内同语言的段落合成一次上游调用。"""
+    fut = asyncio.get_running_loop().create_future()
+    entry = {"text": text, "fut": fut}
+    async with _batch_lock:
+        lst = _pending.setdefault(target, [])
+        was_empty = not lst
+        lst.append(entry)
+        if was_empty:
+            _schedule_flush(target)
+    return await fut
+
+
+async def _flush(target: str) -> None:
+    async with _batch_lock:
+        lst = _pending.get(target) or []
+        batch: list[dict] = []
+        chars = 0
+        while lst and len(batch) < BATCH_MAX_ITEMS:
+            chars += len(lst[0]["text"]) + 1
+            if batch and chars > BATCH_MAX_CHARS:
+                break
+            batch.append(lst.pop(0))
+        if lst:
+            _schedule_flush(target)
+    if not batch:
+        return
+    try:
+        items = await _upstream_call([e["text"] for e in batch], target)
+        for i, e in enumerate(batch):
+            if e["fut"].done():
+                continue
+            if i in items:
+                e["fut"].set_result(items[i])
+            else:
+                e["fut"].set_exception(
+                    ProviderError("该批缺少 index=%d 的译文，收到下标: %s" % (i, sorted(items))))
+    except Exception as ex:
+        for e in batch:
+            if not e["fut"].done():
+                e["fut"].set_exception(ex)
+
+
     async def deeplx_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         target = to_doubao_lang(target_lang)
         if not target:
             raise ProviderError("不支持的目标语言: %r（豆包支持 19 种语言码）" % target_lang,
                                 code=400, http_status=400)
-        cred = db.get_credential("doubao")
-        if not cred:
-            raise ProviderError("未配置豆包 Cookie：请到后台扫码登录", code=710012001,
-                                http_status=401, credential_expired=True)
-        cookie = cred["data"].get("cookie", "")
-        engine = str(db.get_setting("doubao_engine", "1"))
-        scene = int(db.get_setting("doubao_scene", 1))
-
+        chunks = split_chunks(text)
+        if len(chunks) == 1:
+            # 普通段落（整页翻译的主体）走凑批，多段合一次上游调用
+            return await _translate_batched(chunks[0], target)
+        # 超长文本按行切块后逐块直发，不凑批，避免单次调用过大
         out = []
-        async with _upstream_lock:
-            for chunk in split_chunks(text):
-                body = json.dumps({
-                    "raw_text": [chunk],
-                    "target_lang": target,
-                    "translate_service": engine,
-                    "scene": scene,
-                    "frontend_source": 1,
-                }).encode("utf-8")
-                headers = {
-                    "Content-Type": "application/json",
-                    "Accept": "*/*",
-                    "User-Agent": UA,
-                    "Referer": config.DOUBAO_UPSTREAM + "/",
-                    "Cookie": cookie,
-                }
-                try:
-                    resp = await _get_client().post(config.DOUBAO_UPSTREAM + STREAM_PATH,
-                                                    content=body, headers=headers)
-                except httpx.HTTPError as e:
-                    raise ProviderError("网络错误: %s" % e, code=-1, http_status=504)
-                try:
-                    items = read_doubao_stream(resp.content, resp.headers.get("content-type", ""))
-                except ProviderError as e:
-                    if e.credential_expired:
-                        db.set_credential_status("doubao", "expired", cred["name"])
-                    raise
-                if 0 not in items:
-                    raise ProviderError("该批没有 index=0 的译文，收到下标: %s" % sorted(items))
-                out.append(items[0])
+        for chunk in chunks:
+            items = await _upstream_call([chunk], target)
+            if 0 not in items:
+                raise ProviderError("该批没有 index=0 的译文，收到下标: %s" % sorted(items))
+            out.append(items[0])
         return "\n".join(out)
 
     async def test(self) -> dict:
